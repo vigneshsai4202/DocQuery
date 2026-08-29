@@ -1,0 +1,35 @@
+# --- Web framework ---
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+python-multipart>=0.0.20
+
+# --- Database ---
+sqlalchemy>=2.0.36
+alembic>=1.14.0
+psycopg2-binary>=2.9.10
+
+# --- Config & validation ---
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+email-validator>=2.2.0
+
+# --- Auth ---
+PyJWT>=2.10.0
+bcrypt>=4.2.0
+
+# --- PDF processing ---
+pypdf>=5.1.0
+
+# --- RAG: embeddings + vector store ---
+sentence-transformers>=3.3.1
+faiss-cpu>=1.9.0
+numpy>=1.26.4
+
+# --- LLM provider HTTP client ---
+requests>=2.32.0
+openai>=1.58.0
+
+# --- Testing ---
+pytest>=8.3.0
+pytest-cov>=6.0.0
+httpx>=0.28.0
