@@ -20,37 +20,26 @@ from app.core.config import settings
 
 class BaseLLMProvider(ABC):
     @abstractmethod
-    def complete(self, system_prompt: str, user_message: str) -> str:
+    def complete(self, system_prompt: str, user_message: str, history: list[dict] | None = None) -> str:
         """Return the full assistant reply as a string."""
 
-    def stream(self, system_prompt: str, user_message: str) -> Generator[str, None, None]:
+    def stream(self, system_prompt: str, user_message: str, history: list[dict] | None = None) -> Generator[str, None, None]:
         """Yield token chunks. Default: yield complete() as one chunk."""
-        yield self.complete(system_prompt, user_message)
+        yield self.complete(system_prompt, user_message, history=history or [])
 
 
 class OllamaProvider(BaseLLMProvider):
-    def complete(self, system_prompt: str, user_message: str) -> str:
-        payload = {
-            "model": settings.OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            "stream": False,
-        }
+    def _messages(self, system_prompt: str, user_message: str, history: list[dict]) -> list[dict]:
+        return [{"role": "system", "content": system_prompt}, *history, {"role": "user", "content": user_message}]
+
+    def complete(self, system_prompt: str, user_message: str, history: list[dict] | None = None) -> str:
+        payload = {"model": settings.OLLAMA_MODEL, "messages": self._messages(system_prompt, user_message, history or []), "stream": False}
         resp = requests.post(f"{settings.OLLAMA_BASE_URL}/api/chat", json=payload, timeout=120)
         resp.raise_for_status()
         return resp.json()["message"]["content"]
 
-    def stream(self, system_prompt: str, user_message: str) -> Generator[str, None, None]:
-        payload = {
-            "model": settings.OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            "stream": True,
-        }
+    def stream(self, system_prompt: str, user_message: str, history: list[dict] | None = None) -> Generator[str, None, None]:
+        payload = {"model": settings.OLLAMA_MODEL, "messages": self._messages(system_prompt, user_message, history or []), "stream": True}
         with requests.post(f"{settings.OLLAMA_BASE_URL}/api/chat", json=payload, stream=True, timeout=120) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines():
@@ -66,28 +55,22 @@ class OllamaProvider(BaseLLMProvider):
 class OpenAIProvider(BaseLLMProvider):
     def __init__(self):
         import openai
-        self._client = openai.OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            base_url=settings.OPENAI_BASE_URL,
-        )
+        self._client = openai.OpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
 
-    def complete(self, system_prompt: str, user_message: str) -> str:
+    def _messages(self, system_prompt: str, user_message: str, history: list[dict]) -> list[dict]:
+        return [{"role": "system", "content": system_prompt}, *history, {"role": "user", "content": user_message}]
+
+    def complete(self, system_prompt: str, user_message: str, history: list[dict] | None = None) -> str:
         resp = self._client.chat.completions.create(
             model=settings.OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
+            messages=self._messages(system_prompt, user_message, history or []),
         )
         return resp.choices[0].message.content
 
-    def stream(self, system_prompt: str, user_message: str) -> Generator[str, None, None]:
+    def stream(self, system_prompt: str, user_message: str, history: list[dict] | None = None) -> Generator[str, None, None]:
         resp = self._client.chat.completions.create(
             model=settings.OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
+            messages=self._messages(system_prompt, user_message, history or []),
             stream=True,
         )
         for chunk in resp:
@@ -97,10 +80,15 @@ class OpenAIProvider(BaseLLMProvider):
 
 
 class HuggingFaceProvider(BaseLLMProvider):
-    def complete(self, system_prompt: str, user_message: str) -> str:
+    def complete(self, system_prompt: str, user_message: str, history: list[dict] | None = None) -> str:
         headers = {"Authorization": f"Bearer {settings.HUGGINGFACE_API_KEY}"}
+        history_text = "".join(
+            f"<s>[INST] {m['content']} [/INST]" if m["role"] == "user" else f"{m['content']} </s>"
+            for m in (history or [])
+        )
+        prompt = f"<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n{history_text}{user_message} [/INST]"
         payload = {
-            "inputs": f"<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n{user_message} [/INST]",
+            "inputs": prompt,
             "parameters": {"max_new_tokens": 512, "return_full_text": False},
         }
         url = f"https://api-inference.huggingface.co/models/{settings.HUGGINGFACE_MODEL}"

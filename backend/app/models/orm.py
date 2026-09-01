@@ -1,9 +1,8 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import (
-    DateTime, Enum, ForeignKey, Integer, String, Text, func
-)
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -54,7 +53,7 @@ class Chunk(Base):
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
-    faiss_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(384), nullable=True)
 
     document: Mapped["Document"] = relationship("Document", back_populates="chunks")
 

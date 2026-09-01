@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Navigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 export default function AuthPage() {
@@ -8,8 +8,11 @@ export default function AuthPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const { login, signup } = useAuth()
+  const { login, signup, token } = useAuth()
   const navigate = useNavigate()
+
+  // Already logged in — go straight to app
+  if (token) return <Navigate to="/app" replace />
 
   const submit = async (e) => {
     e.preventDefault()
@@ -18,7 +21,7 @@ export default function AuthPage() {
     try {
       if (mode === 'login') await login(email, password)
       else await signup(email, password)
-      navigate('/')
+      navigate('/app')
     } catch (err) {
       setError(err.response?.data?.detail || 'Something went wrong')
     } finally {

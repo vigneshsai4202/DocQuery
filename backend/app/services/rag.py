@@ -16,7 +16,7 @@ from app.models.orm import Chunk, Document
 from app.models.schemas import ChunkOut
 from app.services.embeddings import embedder
 from app.services.llm_provider import llm_provider
-from app.services.vector_store import vector_store
+from app.services import vector_store as vs
 
 _SYSTEM_TEMPLATE = """\
 You are a precise document assistant. Answer the user's question using ONLY the context passages provided below.
@@ -26,6 +26,9 @@ Do not speculate or use outside knowledge. Be concise and direct.
 Context:
 {context}
 """
+
+# How many prior message pairs (user+assistant) to include as history
+_HISTORY_TURNS = 4
 
 
 def _build_context(chunks: list[ChunkOut]) -> str:
@@ -60,7 +63,9 @@ def _deduplicate(chunks: list[ChunkOut]) -> list[ChunkOut]:
 @lru_cache(maxsize=256)
 def _cached_embed(question_hash: str, question: str) -> np.ndarray:
     """Cache embeddings by question hash to avoid re-embedding identical queries."""
-    return embedder().embed_one(question)
+    arr = embedder().embed_one(question)
+    arr.flags.writeable = False
+    return arr
 
 
 def _embed_query(question: str) -> np.ndarray:
@@ -69,9 +74,9 @@ def _embed_query(question: str) -> np.ndarray:
 
 
 def retrieve_chunks(query: str, top_k: int, db: Session) -> list[ChunkOut]:
-    """Embed query → FAISS search → hydrate from DB → deduplicate."""
-    q_vec = _embed_query(query)
-    hits = vector_store().search(q_vec, top_k)
+    """Embed query → pgvector search → hydrate from DB → deduplicate."""
+    q_vec = _embed_query(query).tolist()
+    hits = vs.search(db, q_vec, top_k)
     if not hits:
         return []
 
@@ -102,10 +107,16 @@ def retrieve_chunks(query: str, top_k: int, db: Session) -> list[ChunkOut]:
     return _deduplicate(results)
 
 
-def stream_answer(question: str, top_k: int, db: Session) -> tuple[list[ChunkOut], Generator[str, None, None]]:
+def stream_answer(
+    question: str,
+    top_k: int,
+    db: Session,
+    history: list[dict] | None = None,
+) -> tuple[list[ChunkOut], Generator[str, None, None]]:
     """
     Returns (sources, token_generator).
     Retrieval happens eagerly; LLM tokens are yielded lazily.
+    history: list of {"role": "user"|"assistant", "content": str} — prior turns.
     """
     sources = retrieve_chunks(question, top_k, db)
     if not sources:
@@ -115,11 +126,29 @@ def stream_answer(question: str, top_k: int, db: Session) -> tuple[list[ChunkOut
 
     context = _build_context(sources)
     system_prompt = _SYSTEM_TEMPLATE.format(context=context)
-    return sources, llm_provider().stream(system_prompt, question)
+    return sources, llm_provider().stream(system_prompt, question, history=history or [])
 
 
-def answer_question(question: str, top_k: int, db: Session) -> tuple[str, list[ChunkOut]]:
+def answer_question(
+    question: str,
+    top_k: int,
+    db: Session,
+    history: list[dict] | None = None,
+) -> tuple[str, list[ChunkOut]]:
     """Full RAG pipeline, returns complete answer string + sources."""
-    sources, token_gen = stream_answer(question, top_k, db)
+    sources, token_gen = stream_answer(question, top_k, db, history=history)
     answer = "".join(token_gen)
     return answer, sources
+
+
+def load_history(conversation_id: str, db: Session) -> list[dict]:
+    """Load the last _HISTORY_TURNS pairs from a conversation for context."""
+    from app.models.orm import Message  # local import to avoid circular
+    rows = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.desc())
+        .limit(_HISTORY_TURNS * 2)
+        .all()
+    )
+    return [{"role": m.role, "content": m.content} for m in reversed(rows)]

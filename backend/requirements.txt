@@ -7,6 +7,7 @@ python-multipart>=0.0.20
 sqlalchemy>=2.0.36
 alembic>=1.14.0
 psycopg2-binary>=2.9.10
+pgvector>=0.3.0
 
 # --- Config & validation ---
 pydantic>=2.10.0
@@ -17,12 +18,14 @@ email-validator>=2.2.0
 PyJWT>=2.10.0
 bcrypt>=4.2.0
 
+# --- Rate limiting ---
+slowapi>=0.1.9
+
 # --- PDF processing ---
 pypdf>=5.1.0
 
-# --- RAG: embeddings + vector store ---
+# --- RAG: embeddings ---
 sentence-transformers>=3.3.1
-faiss-cpu>=1.9.0
 numpy>=1.26.4
 
 # --- LLM provider HTTP client ---

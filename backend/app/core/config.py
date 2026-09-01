@@ -29,10 +29,10 @@ class Settings(BaseSettings):
 
     # --- Database (Neon Postgres) ---
     # Example: postgresql+psycopg2://user:password@ep-xxx.neon.tech/dbname?sslmode=require
-    DATABASE_URL: str = "postgresql+psycopg2://user:password@localhost:5432/docuquery"
+    DATABASE_URL: str
 
     # --- JWT auth ---
-    JWT_SECRET_KEY: str = "change-me-in-production-must-be-32-chars-min"
+    JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
 

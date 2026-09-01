@@ -5,17 +5,15 @@ Steps:
   1. Extract text per page from the PDF (pypdf).
   2. Chunk the text (sliding window, token-approximate).
   3. Embed all chunks (sentence-transformers or OpenAI).
-  4. Store vectors in FAISS + write Chunk rows to Postgres.
+  4. Write Chunk rows + embeddings to Postgres (pgvector).
   5. Update Document status.
 """
-from pathlib import Path
-
 from sqlalchemy.orm import Session
 
 from app.models.orm import Chunk, Document
 from app.services.chunking import chunk_pages
 from app.services.embeddings import embedder
-from app.services.vector_store import vector_store
+from app.services.vector_store import add_embeddings
 
 
 def extract_pages(file_path: str) -> dict[int, str]:
@@ -63,17 +61,11 @@ def ingest_document(document_id: str, file_path: str, db: Session) -> None:
             chunk_objs.append(obj)
         db.flush()  # get IDs without committing
 
-        # Embed
+        # Embed and store in pgvector
         texts = [c.text for c in chunks]
         vectors = embedder().embed(texts)
-
-        # Store in FAISS
         chunk_ids = [obj.id for obj in chunk_objs]
-        faiss_ids = vector_store().add(vectors, chunk_ids, document_id)
-
-        # Write FAISS IDs back to DB
-        for obj, fid in zip(chunk_objs, faiss_ids):
-            obj.faiss_id = fid
+        add_embeddings(db, chunk_ids, vectors.tolist())
 
         doc.status = "ready"
         db.commit()

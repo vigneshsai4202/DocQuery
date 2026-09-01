@@ -2,6 +2,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -9,7 +10,7 @@ from app.core.security import get_current_user_id
 from app.db.base import get_db
 from app.models.orm import Document
 from app.models.schemas import DocumentOut
-from app.services.vector_store import vector_store
+from app.services import vector_store as vs
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -110,7 +111,7 @@ def delete_document(
     if not doc or doc.owner_id != user_id:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    vector_store().delete_by_document(document_id)
+    vs.delete_by_document(db, document_id)
 
     file_path = _UPLOAD_DIR / doc.filename
     if file_path.exists():
@@ -118,3 +119,19 @@ def delete_document(
 
     db.delete(doc)
     db.commit()
+
+
+@router.get("/{document_id}/file")
+def serve_document_file(
+    document_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Stream the raw PDF file back to the client."""
+    doc = db.get(Document, document_id)
+    if not doc or doc.owner_id != user_id:
+        raise HTTPException(status_code=404, detail="Document not found")
+    file_path = _UPLOAD_DIR / doc.filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    return FileResponse(str(file_path), media_type="application/pdf", filename=doc.original_name)

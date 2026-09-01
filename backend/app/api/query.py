@@ -8,7 +8,7 @@ from app.core.security import get_current_user_id
 from app.db.base import get_db
 from app.models.orm import Conversation, Message
 from app.models.schemas import QueryRequest, QueryResponse, SearchRequest, SearchResponse
-from app.services.rag import answer_question, retrieve_chunks, stream_answer
+from app.services.rag import answer_question, load_history, retrieve_chunks, stream_answer
 
 router = APIRouter(prefix="/query", tags=["query"])
 
@@ -44,7 +44,8 @@ def ask(
 ):
     """Full RAG pipeline. Returns complete answer + sources in one response."""
     conv = _resolve_conversation(body, user_id, db)
-    answer, sources = answer_question(body.question, body.top_k, db)
+    history = load_history(conv.id, db) if body.conversation_id else []
+    answer, sources = answer_question(body.question, body.top_k, db, history=history)
 
     db.add(Message(conversation_id=conv.id, role="user", content=body.question))
     sources_payload = [s.model_dump() for s in sources]
@@ -82,14 +83,17 @@ def ask_stream(
       data: {"type": "error",   "detail": "..."}    — on failure
     """
     conv = _resolve_conversation(body, user_id, db)
+    history = load_history(conv.id, db) if body.conversation_id else []
     db.add(Message(conversation_id=conv.id, role="user", content=body.question))
     db.flush()
 
-    sources, token_gen = stream_answer(body.question, body.top_k, db)
+    sources, token_gen = stream_answer(body.question, body.top_k, db, history=history)
+    conv_id = conv.id
+    sources_payload = [s.model_dump() for s in sources]
+    db.commit()  # persist the user message before the session is closed
 
     def _event_stream():
         # 1. Send sources immediately so the UI can render them before the answer
-        sources_payload = [s.model_dump() for s in sources]
         yield f"data: {json.dumps({'type': 'sources', 'sources': sources_payload})}\n\n"
 
         # 2. Stream tokens
@@ -102,18 +106,21 @@ def ask_stream(
             yield f"data: {json.dumps({'type': 'error', 'detail': str(exc)})}\n\n"
             return
 
-        # 3. Persist and send done event
+        # 3. Persist assistant message in a fresh session and send done event
+        from app.db.base import SessionLocal
         answer_text = "".join(full_answer)
-        assistant_msg = Message(
-            conversation_id=conv.id,
-            role="assistant",
-            content=answer_text,
-            sources=json.dumps(sources_payload),
-        )
-        db.add(assistant_msg)
-        db.commit()
-        db.refresh(assistant_msg)
+        with SessionLocal() as fresh_db:
+            assistant_msg = Message(
+                conversation_id=conv_id,
+                role="assistant",
+                content=answer_text,
+                sources=json.dumps(sources_payload),
+            )
+            fresh_db.add(assistant_msg)
+            fresh_db.commit()
+            fresh_db.refresh(assistant_msg)
+            msg_id = assistant_msg.id
 
-        yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv.id, 'message_id': assistant_msg.id})}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv_id, 'message_id': msg_id})}\n\n"
 
     return StreamingResponse(_event_stream(), media_type="text/event-stream")

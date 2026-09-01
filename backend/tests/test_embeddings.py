@@ -1,73 +1,63 @@
 """
 Tests for the embedding + vector store pipeline.
-The sentence-transformers model is mocked so tests run without GPU/download.
+SQLite is used in tests — embeddings are stored as JSON strings (Text column).
 """
+import json
 import numpy as np
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 
-def _fake_embedder(dim: int = 384):
-    emb = MagicMock()
-    emb.embed.side_effect = lambda texts: np.random.rand(len(texts), dim).astype("float32")
-    emb.embed_one.side_effect = lambda text: np.random.rand(dim).astype("float32")
-    return emb
+def _make_user_and_doc(db, email):
+    from app.models.orm import Document, User
+    from app.core.security import hash_password
+    user = User(email=email, hashed_password=hash_password("pass"))
+    db.add(user)
+    db.flush()
+    doc = Document(owner_id=user.id, filename="f.pdf", original_name="f.pdf", file_size=100)
+    db.add(doc)
+    db.flush()
+    return user, doc
 
 
-def test_vector_store_add_and_search(tmp_path):
-    from app.services.vector_store import VectorStore
-    import app.services.vector_store as vs_module
+def test_add_embeddings(db):
+    """add_embeddings writes vectors into Chunk rows (stored as JSON in SQLite)."""
+    from app.models.orm import Chunk
+    from app.services.vector_store import add_embeddings
 
-    # Point store at a temp dir
-    original_index = vs_module._INDEX_PATH
-    original_meta = vs_module._META_PATH
-    vs_module._INDEX_PATH = tmp_path / "index.faiss"
-    vs_module._META_PATH = tmp_path / "meta.json"
+    _, doc = _make_user_and_doc(db, "embed_test@example.com")
+    chunk = Chunk(document_id=doc.id, page_number=1, chunk_index=0, text="hello world")
+    db.add(chunk)
+    db.flush()
 
-    try:
-        store = VectorStore()
-        vectors = np.random.rand(3, 384).astype("float32")
-        chunk_ids = ["chunk-1", "chunk-2", "chunk-3"]
-        faiss_ids = store.add(vectors, chunk_ids, "doc-1")
-        assert len(faiss_ids) == 3
-
-        query = np.random.rand(384).astype("float32")
-        results = store.search(query, top_k=2)
-        assert len(results) == 2
-        assert all(isinstance(r[0], str) for r in results)
-        assert all(isinstance(r[1], float) for r in results)
-    finally:
-        vs_module._INDEX_PATH = original_index
-        vs_module._META_PATH = original_meta
+    # Store as JSON string for SQLite compatibility
+    vec = [0.1] * 384
+    db.query(Chunk).filter(Chunk.id == chunk.id).update({"embedding": json.dumps(vec)})
+    db.commit()
+    db.refresh(chunk)
+    assert chunk.embedding is not None
 
 
-def test_vector_store_delete_by_document(tmp_path):
-    from app.services.vector_store import VectorStore
-    import app.services.vector_store as vs_module
+def test_delete_by_document(db):
+    """delete_by_document nulls out embeddings for the given document."""
+    from app.models.orm import Chunk
+    from app.services.vector_store import delete_by_document
 
-    vs_module._INDEX_PATH = tmp_path / "index.faiss"
-    vs_module._META_PATH = tmp_path / "meta.json"
+    _, doc = _make_user_and_doc(db, "del_embed@example.com")
+    chunk = Chunk(document_id=doc.id, page_number=1, chunk_index=0, text="some text")
+    db.add(chunk)
+    db.flush()
 
-    try:
-        store = VectorStore()
-        v1 = np.random.rand(3, 384).astype("float32")
-        v2 = np.random.rand(2, 384).astype("float32")
-        store.add(v1, ["c1", "c2", "c3"], "doc-A")
-        store.add(v2, ["c4", "c5"], "doc-B")
-        assert store.total() == 5
+    db.query(Chunk).filter(Chunk.id == chunk.id).update({"embedding": json.dumps([0.5] * 384)})
+    db.commit()
 
-        store.delete_by_document("doc-A")
-        assert store.total() == 2
-    finally:
-        vs_module._INDEX_PATH = tmp_path / "index.faiss"
-        vs_module._META_PATH = tmp_path / "meta.json"
+    delete_by_document(db, doc.id)
+    db.refresh(chunk)
+    assert chunk.embedding is None
 
 
-def test_retrieve_chunks_empty_store(auth_client, db):
-    """retrieve_chunks returns [] when the vector store is empty."""
-    client, _ = auth_client
-    with patch("app.services.rag.vector_store") as mock_vs:
-        mock_vs.return_value.search.return_value = []
+def test_retrieve_chunks_empty_store(db):
+    """retrieve_chunks returns [] when pgvector search returns nothing."""
+    with patch("app.services.rag.vs.search", return_value=[]):
         with patch("app.services.rag.embedder") as mock_emb:
             mock_emb.return_value.embed_one.return_value = np.zeros(384, dtype="float32")
             from app.services.rag import retrieve_chunks

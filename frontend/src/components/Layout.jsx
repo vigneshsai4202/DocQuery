@@ -1,12 +1,21 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
 
 const NAV = [
-  { to: '/', label: '💬 Chat', end: true },
-  { to: '/documents', label: '📄 Documents' },
-  { to: '/history', label: '🕑 History' },
+  { to: '/app', label: '💬 Chat', end: true },
+  { to: '/app/documents', label: '📄 Documents' },
+  { to: '/app/history', label: '🕑 History' },
 ]
 
 export default function Layout() {
+  const { logout } = useAuth()
+  const navigate = useNavigate()
+
+  const handleLogout = () => {
+    logout()
+    navigate('/')
+  }
+
   return (
     <div style={styles.shell}>
       <aside style={styles.sidebar}>
@@ -23,6 +32,7 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
+        <button style={styles.logoutBtn} onClick={handleLogout}>Sign out</button>
       </aside>
       <main style={styles.main}>
         <Outlet />
