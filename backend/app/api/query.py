@@ -33,7 +33,7 @@ def semantic_search(
     db: Session = Depends(get_db),
 ):
     """Semantic search only — returns top-k chunks without calling the LLM."""
-    return SearchResponse(results=retrieve_chunks(body.query, body.top_k, db))
+    return SearchResponse(results=retrieve_chunks(body.query, body.top_k, db, user_id=user_id))
 
 
 @router.post("/ask", response_model=QueryResponse)
@@ -45,7 +45,7 @@ def ask(
     """Full RAG pipeline. Returns complete answer + sources in one response."""
     conv = _resolve_conversation(body, user_id, db)
     history = load_history(conv.id, db) if body.conversation_id else []
-    answer, sources = answer_question(body.question, body.top_k, db, history=history)
+    answer, sources = answer_question(body.question, body.top_k, db, history=history, user_id=user_id)
 
     db.add(Message(conversation_id=conv.id, role="user", content=body.question))
     sources_payload = [s.model_dump() for s in sources]
@@ -87,7 +87,7 @@ def ask_stream(
     db.add(Message(conversation_id=conv.id, role="user", content=body.question))
     db.flush()
 
-    sources, token_gen = stream_answer(body.question, body.top_k, db, history=history)
+    sources, token_gen = stream_answer(body.question, body.top_k, db, history=history, user_id=user_id)
     conv_id = conv.id
     sources_payload = [s.model_dump() for s in sources]
     db.commit()  # persist the user message before the session is closed

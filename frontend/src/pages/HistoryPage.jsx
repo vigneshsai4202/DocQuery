@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import api from '../api'
 
 function ConversationDetail({ id, onBack }) {
@@ -40,10 +41,13 @@ function ConversationDetail({ id, onBack }) {
 
 export default function HistoryPage() {
   const [conversations, setConversations] = useState([])
-  const [selected, setSelected] = useState(null)
+  const [error, setError] = useState('')
+  const navigate = useNavigate()
 
   useEffect(() => {
-    api.get('/conversations').then(r => setConversations(r.data))
+    api.get('/conversations')
+      .then(r => setConversations(r.data))
+      .catch(() => setError('Failed to load conversations.'))
   }, [])
 
   const remove = async (e, id) => {
@@ -51,18 +55,16 @@ export default function HistoryPage() {
     if (!confirm('Delete this conversation?')) return
     await api.delete(`/conversations/${id}`)
     setConversations(c => c.filter(x => x.id !== id))
-    if (selected === id) setSelected(null)
   }
-
-  if (selected) return <div style={styles.page}><ConversationDetail id={selected} onBack={() => setSelected(null)} /></div>
 
   return (
     <div style={styles.page}>
       <h2 style={styles.title}>Conversation History</h2>
-      {conversations.length === 0 && <p style={styles.empty}>No conversations yet.</p>}
+      {error && <p style={{ color: '#f87171', marginBottom: '1rem' }}>{error}</p>}
+      {!error && conversations.length === 0 && <p style={styles.empty}>No conversations yet.</p>}
       <div style={styles.list}>
         {conversations.map(c => (
-          <div key={c.id} style={styles.card} onClick={() => setSelected(c.id)}>
+          <div key={c.id} style={styles.card} onClick={() => navigate(`/app/chat/${c.id}`)}>
             <div style={styles.cardMain}>
               <span style={styles.cardTitle}>{c.title}</span>
               <button style={styles.deleteBtn} onClick={e => remove(e, c.id)}>Delete</button>

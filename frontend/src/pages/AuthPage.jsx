@@ -21,7 +21,7 @@ export default function AuthPage() {
     try {
       if (mode === 'login') await login(email, password)
       else await signup(email, password)
-      navigate('/app')
+      // redirect handled by AuthContext via window.location.href
     } catch (err) {
       setError(err.response?.data?.detail || 'Something went wrong')
     } finally {

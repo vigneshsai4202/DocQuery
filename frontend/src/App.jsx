@@ -17,6 +17,7 @@ export default function App() {
           <Route path="/login" element={<AuthPage />} />
           <Route path="/app" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
             <Route index element={<ChatPage />} />
+            <Route path="chat/:conversationId" element={<ChatPage />} />
             <Route path="documents" element={<DocumentsPage />} />
             <Route path="history" element={<HistoryPage />} />
           </Route>

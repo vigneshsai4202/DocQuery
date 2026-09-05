@@ -73,7 +73,7 @@ def _embed_query(question: str) -> np.ndarray:
     return _cached_embed(h, question)
 
 
-def retrieve_chunks(query: str, top_k: int, db: Session) -> list[ChunkOut]:
+def retrieve_chunks(query: str, top_k: int, db: Session, user_id: str | None = None) -> list[ChunkOut]:
     """Embed query → pgvector search → hydrate from DB → deduplicate."""
     q_vec = _embed_query(query).tolist()
     hits = vs.search(db, q_vec, top_k)
@@ -83,12 +83,14 @@ def retrieve_chunks(query: str, top_k: int, db: Session) -> list[ChunkOut]:
     chunk_ids = [cid for cid, _ in hits]
     score_map = {cid: score for cid, score in hits}
 
-    rows = (
+    q = (
         db.query(Chunk, Document.original_name)
         .join(Document, Chunk.document_id == Document.id)
         .filter(Chunk.id.in_(chunk_ids))
-        .all()
     )
+    if user_id:
+        q = q.filter(Document.owner_id == user_id)
+    rows = q.all()
 
     results = [
         ChunkOut(
@@ -112,13 +114,14 @@ def stream_answer(
     top_k: int,
     db: Session,
     history: list[dict] | None = None,
+    user_id: str | None = None,
 ) -> tuple[list[ChunkOut], Generator[str, None, None]]:
     """
     Returns (sources, token_generator).
     Retrieval happens eagerly; LLM tokens are yielded lazily.
     history: list of {"role": "user"|"assistant", "content": str} — prior turns.
     """
-    sources = retrieve_chunks(question, top_k, db)
+    sources = retrieve_chunks(question, top_k, db, user_id=user_id)
     if not sources:
         def _empty():
             yield "I don't have enough information in the provided documents to answer that."
@@ -134,9 +137,10 @@ def answer_question(
     top_k: int,
     db: Session,
     history: list[dict] | None = None,
+    user_id: str | None = None,
 ) -> tuple[str, list[ChunkOut]]:
     """Full RAG pipeline, returns complete answer string + sources."""
-    sources, token_gen = stream_answer(question, top_k, db, history=history)
+    sources, token_gen = stream_answer(question, top_k, db, history=history, user_id=user_id)
     answer = "".join(token_gen)
     return answer, sources
 

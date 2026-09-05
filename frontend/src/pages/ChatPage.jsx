@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useParams } from 'react-router-dom'
 import api from '../api'
 import { useAuth } from '../context/AuthContext'
 import PdfViewerModal from '../components/PdfViewerModal'
@@ -58,7 +59,8 @@ function ErrorBanner({ message, onDismiss }) {
 
 export default function ChatPage() {
   const { token } = useAuth()
-  const [conversationId, setConversationId] = useState(null)
+  const { conversationId: routeConvId } = useParams()
+  const [conversationId, setConversationId] = useState(routeConvId || null)
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -76,6 +78,15 @@ export default function ChatPage() {
       setDocMap(map)
     }).catch(() => {})
   }, [])
+
+  // Load existing conversation if opened from history
+  useEffect(() => {
+    if (!routeConvId) return
+    api.get(`/conversations/${routeConvId}`).then(({ data }) => {
+      setConversationId(data.id)
+      setMessages(data.messages.map(m => ({ role: m.role, content: m.content, sources: m.sources || null })))
+    }).catch(() => {})
+  }, [routeConvId])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -96,10 +107,11 @@ export default function ChatPage() {
     setError('')
     setLoading(true)
 
-    // Capture the index for the assistant placeholder before any state updates
-    const assistantIdx = messages.length + 1
-
-    setMessages(m => [...m, { role: 'user', content: question, sources: null }])
+    let assistantIdx
+    setMessages(m => {
+      assistantIdx = m.length + 1
+      return [...m, { role: 'user', content: question, sources: null }]
+    })
     setMessages(m => [...m, { role: 'assistant', content: '', sources: null, streaming: true }])
 
     try {
@@ -166,6 +178,7 @@ export default function ChatPage() {
     setMessages([])
     setError('')
     setLoading(false)
+    window.history.pushState({}, '', '/app')
   }
 
   return (
